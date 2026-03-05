@@ -59,6 +59,9 @@ tcc <- raster("TCC/science_tcc_conus_wgs84_v2023-5_20200101_20201231.tif")
 tcc.comean <- co %>%
   mutate(tcc = exact_extract(tcc, co %>% st_transform(st_crs(tcc)), "mean"))
 
+# Saving county TCC shapefile
+st_write(tcc.comean, "TCC/tcc_county_conus_2020.shp")
+
 
 # st_extract(tcc, co %>% st_transform(st_crs(tcc)), FUN = function(x) mean(x, na.rm = TRUE))
 #
