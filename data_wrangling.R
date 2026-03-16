@@ -6,8 +6,8 @@
 
 # Creating spatial weighted average values for CONUS counties of:
 # 1)  Green space (% coverage) -
-# 2)  Tree canopy (% coverage) - dl
-# 3)  Water bodies (% coverage) - dl
+# 2)  Tree canopy (% coverage) - dl, process, save
+# 3)  Water bodies (% coverage) - dl, process, save
 # 4)  Land use - impervious
 # 5)  Land use - manmade impervious
 # 6)  Albedo
@@ -15,6 +15,7 @@
 # 8)  Albedo - manmade imperviousm
 # 9)  Air conditioning ownership - dl
 # 10) Residential energy cost : HH income
+# 11) Combine all measures
 
 
 #---- Setup #----
@@ -63,21 +64,19 @@ tcc.comean <- co %>%
 st_write(tcc.comean, "TCC/tcc_county_conus_2020.shp")
 
 
-# st_extract(tcc, co %>% st_transform(st_crs(tcc)), FUN = function(x) mean(x, na.rm = TRUE))
-#
-# co.small <- co %>%
-#   slice_sample(prop = 0.05)
-#
-# co.small <- co.small %>%
-#   mutate(tcc = exact_extract(tcc, co.small %>% st_transform(st_crs(tcc)), "mean"))
-#
-# tcc.small <- st_extract(tcc, co.small[, 1] %>% st_transform(st_crs(tcc)), FUN = function(x) mean(x, na.rm = TRUE))
-#
-# tcc.small <- foreach(ii = seq_len(nrow(tcc.small)), .combine = "rbind") %dopar% {
-#   x <- tcc.small[, ii]
-#
-#   return(st_extract(t))
-# }
+#---- Water Bodies #----
+
+# Calculating water body percentages from census TIGER/Lines
+co.water <- co %>%
+  mutate(water.pct = AWATER / (ALAND + AWATER))
+
+# Saving county water area shapefile
+st_write(co.water, "Water/water_area_county_conus_2024.shp")
+
+
+#---- Land Use #----
+
+# Read in annual land use raster (downloaded from https://www.mrlc.gov/data)
 
 
 #---- Residential Energy Cost #----
