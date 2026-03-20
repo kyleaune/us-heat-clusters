@@ -21,7 +21,7 @@
 #---- Setup #----
 
 pkgs <- c("tidyverse", "sf", "stars", "raster", "tidycensus", "tigris", "exactextractr",
-          "parallel", "doParallel", "foreach")
+          "parallel", "doParallel", "foreach", "readxl", "httr", "jsonlite")
 
 install.packages(setdiff(pkgs, rownames(installed.packages())))
 
@@ -81,8 +81,145 @@ st_write(co.water, "Water/water_area_county_conus_2024.shp")
 
 #---- Residential Energy Cost #----
 
-# Workflow:
-# 1) Read in Form 861 (2020) - annual sales ($ and mWh) by utility
-# 2) Calculate cost per kWh (Sales_Ult_Cust_2020.xslx)
+# Read in Form 861 (2020) - annual sales ($ and mWh) by utility
+eng.20 <- read_xlsx("EIA Form 861 - 2020/Sales_Ult_cust_2020.xlsx",
+                 sheet = "States",
+                 skip = 3,
+                 n_max = 2656,
+                 col_names = c("year", "utility_no", "utility", "part", "service",
+                               "data_type", "state", "own", "ba",
+                               paste(rep(c("rev", "sales", "cust"), times = 5),
+                                     rep(c("res", "com", "ind", "trans", "total"), each = 3), sep = "."))) %>%
+  mutate(across(.cols = c(rev.res:cust.trans),
+                .fns = ~ as.numeric(na_if(., "." ))))
+
+# Read in Form 861 (2024) - annual sales ($ and mWh) by utility
+eng.24 <- read_xlsx("EIA Form 861 - 2024/Sales_Ult_cust_2024.xlsx",
+                    sheet = "States",
+                    skip = 3,
+                    n_max = 2656,
+                    col_names = c("year", "utility_no", "utility", "part", "service",
+                                  "data_type", "state", "own", "ba",
+                                  paste(rep(c("rev", "sales", "cust"), times = 5),
+                                        rep(c("res", "com", "ind", "trans", "total"), each = 3), sep = "."))) %>%
+  mutate(across(.cols = c(rev.res:cust.trans),
+                .fns = ~ as.numeric(na_if(., "." )))) %>%
+  # Dropping non-Part A (A = bundled utilities (producer/supplier), B = energy production
+  # only, C = energy delivery only, D = largely unused code)
+  filter(part == "A")
+
+# Cleaning and calculating 2020 energy data
+eng.20 <- eng.20 %>%
+  # Dropping Alaska and Hawaii
+  filter(state %in% c("AK", "HI") == FALSE) %>%
+    ## Dropped 15 utilities
+  # Dropping non-Part A (A = bundled utilities (producer/supplier), B = energy production
+  # only, C = energy delivery only, D = largely unused code)
+  filter(part == "A") %>%
+    ## 1,039 utilities dropped
+  # Dropping utilities with no residential sales
+  filter(rev.res > 0) %>%
+  filter(is.na(rev.res) == FALSE) %>%
+    ## 98 utilities dropped
+  # Dropping 'Behind the Meter' companies
+  filter(own != "Behind the Meter") %>%
+    ## 192 utilities dropped, 1,312 utilities in 2020
+  # Calculate cost per kWh
+  mutate(cost.res = rev.res / sales.res)
+
 # 3) Read in utility territory shapefile
+util.url <- "https://services5.arcgis.com/HDRa0B57OVrv2E1q/ArcGIS/rest/services/Electric_Retail_Service_Territories/FeatureServer/0/query"
+
+# Function to download most up to date shapefile of utility boundaries
+dlfx <- function(url, batch_size = 2000) {
+
+  all_chunks <- list()
+  offset <- 0
+
+  repeat {
+
+    query <- list(
+      where = "1=1",
+      outFields = "*",
+      outSR = "4326",
+      f = "json",
+      resultOffset = offset,
+      resultRecordCount = batch_size
+    )
+
+    res <- GET(url, query = query)
+    stop_for_status(res)
+
+    txt <- content(res, as = "text", encoding = "UTF-8")
+    json <- fromJSON(txt, simplifyVector = FALSE)
+
+    # Stop if no features present
+    if (length(json$features) == 0) break
+
+    # Convert json to sf
+    tmp_file <- tempfile(fileext = ".json")
+    writeLines(txt, tmp_file)
+
+    sf_chunk <- st_read(tmp_file, quiet = TRUE)
+
+    all_chunks[[length(all_chunks) + 1]] <- sf_chunk
+
+    # Download progress message
+    message(paste("Downloaded", offset + nrow(sf_chunk), "features"))
+
+    if (nrow(sf_chunk) < batch_size) break
+
+    offset <- offset + batch_size
+  }
+
+  bind_rows(all_chunks)
+}
+
+util.sf <- dlfx(util.url)
+
+st_write(util.sf, ("Electricity Utility Providers/ERST.shp"))
+
+
+territories_sf <- st_read(
+  "https://services5.arcgis.com/HDRa0B57OVrv2E1q/ArcGIS/rest/services/Electric_Retail_Service_Territories/FeatureServer/0",
+  quiet = FALSE
+)
+
+
+
+
+
+
+temp <- tempfile(fileext = ".geojson")
+httr::GET(url, httr::write_disk(temp, overwrite = TRUE))
+st_read(temp)
+st_read("/Users/kta5166/Downloads/erst.json")
+
+util.sf <- st_read("https://services3.arcgis.com/OYP7N6mAJJCyH6hd/ArcGIS/rest/services/Electric_Retail_Service_Territories_HIFLD/FeatureServer/0?f=json")
+
+util.sf <- st_read("Electricity Utility Providers/Electric-Retail-Service-Territories.shp")
+
+table(eng.20$utility_no %in% util.sf$ID)
+table(str_to_upper(eng.20$utility) %in% util.sf$NAME)
+
+eng.20[eng.20$utility_no %in% util.sf$ID == FALSE, ]
+  ## Gulf Power in Florida is missing
+eng.20[str_to_upper(eng.20$utility) %in% util.sf$NAME == FALSE, ]$utility
+
+
+url <- "https://services3.arcgis.com/OYP7N6mAJJCyH6hd/ArcGIS/rest/services/Electric_Retail_Service_Territories_HIFLD/FeatureServer/0?f=json"
+
+  jsonlite::validate(readLines(url, n = 1))
+
 # 4) Spatial join to counties to determine customer-weighted spatial average cost
+
+
+
+
+
+
+
+
+
+
+
